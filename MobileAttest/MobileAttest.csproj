@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <EnforceCodeStyleInBuild>false</EnforceCodeStyleInBuild>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="BouncyCastle.Cryptography" Version="[2.7.0]" />
+    <PackageReference Include="System.Formats.Cbor" Version="[10.0.11]" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="MobileAttest.Tests" />
+  </ItemGroup>
+
+</Project>

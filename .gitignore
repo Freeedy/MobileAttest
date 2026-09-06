@@ -1,0 +1,42 @@
+# Build output
+[Bb]in/
+[Oo]bj/
+[Ll]og/
+[Ll]ogs/
+
+# Visual Studio / Rider / VS Code
+.vs/
+.vscode/
+.idea/
+*.user
+*.suo
+*.userprefs
+*.userosscache
+*.sln.docstates
+
+# Test and coverage output
+[Tt]est[Rr]esult*/
+*.coverage
+*.coverlet.json
+coverage*.json
+coverage*.xml
+coverage*.info
+
+# NuGet
+*.nupkg
+*.snupkg
+.nuget/
+packages/
+!packages/build/
+
+# Local tooling and OS noise
+*.received.*
+.DS_Store
+Thumbs.db
+
+# Device attestation test vectors are real: they carry a device key, an app identity and
+# its signing digest. This repository is public, so they are never committed here. They
+# live outside the repo and are located at run time; see MobileAttest.Tests for how.
+**/Fixtures/
+*.pem
+*attest*.json
