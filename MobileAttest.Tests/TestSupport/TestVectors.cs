@@ -88,6 +88,26 @@ public static class TestVectors
     /// </remarks>
     public const string AndroidAnchorPath = "Android/chain-2-intermediate.pem";
 
+    /// <summary>
+    /// Google hardware attestation root, serial number <c>f92009e853b6b045</c>, relative to
+    /// the root directory.
+    /// </summary>
+    /// <remarks>
+    /// Published by Google, and one of exactly two anchors in the active set. See
+    /// <see cref="AndroidRootKeyAttestationCa1Path"/> for why both matter.
+    /// </remarks>
+    public const string AndroidRoot2022Path = "Android/roots/google-attestation-root-2022.pem";
+
+    /// <summary>
+    /// Google <c>Key Attestation CA1</c>, the newer anchor, relative to the root directory.
+    /// </summary>
+    /// <remarks>
+    /// Issued in July 2025 and signing attestation chains since February 2026. A deployment
+    /// that pins only the older root refuses devices whose chains reach this one, which is a
+    /// failure that arrives with new hardware rather than at integration time.
+    /// </remarks>
+    public const string AndroidRootKeyAttestationCa1Path = "Android/roots/google-key-attestation-ca1.pem";
+
     /// <summary>The directory holding caller-supplied pinned roots, relative to the root directory.</summary>
     public const string RootsDirectoryPath = "Roots";
 

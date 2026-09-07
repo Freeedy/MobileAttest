@@ -36,7 +36,9 @@ public sealed class AppleVectorFile
         byte[] attestationObject,
         byte[] attestationChallenge,
         byte[] assertionObject,
-        byte[] assertionClientDataHash)
+        byte[] assertionClientDataHash,
+        byte[] assertionRequestBody,
+        byte[] assertionNonce)
     {
         Path = path;
         TeamId = teamId;
@@ -46,6 +48,8 @@ public sealed class AppleVectorFile
         AttestationChallenge = attestationChallenge;
         AssertionObject = assertionObject;
         AssertionClientDataHash = assertionClientDataHash;
+        AssertionRequestBody = assertionRequestBody;
+        AssertionNonce = assertionNonce;
     }
 
     /// <summary>The absolute path the vector was read from.</summary>
@@ -86,6 +90,19 @@ public sealed class AppleVectorFile
     /// </remarks>
     public byte[] AssertionClientDataHash { get; }
 
+    /// <summary>The request the device was asked to sign, exactly as the capture holds it.</summary>
+    /// <remarks>
+    /// This and <see cref="AssertionNonce"/> are the two halves a server holds at the moment
+    /// it checks an operation: the body it received and the nonce it issued. Measured against
+    /// this capture, <see cref="AssertionClientDataHash"/> is the SHA-256 of the body followed
+    /// by the nonce, so a test can recompute the digest the way a server does instead of being
+    /// handed it. That distinction is the whole point of exposing these two.
+    /// </remarks>
+    public byte[] AssertionRequestBody { get; }
+
+    /// <summary>The nonce the server issued for that operation, as the capture recorded it.</summary>
+    public byte[] AssertionNonce { get; }
+
     /// <summary>The authenticator data carried by the attestation object.</summary>
     public byte[] AttestationAuthenticatorData =>
         ReadByteStringAfterKey(AttestationObject, AttestationAuthenticatorDataKey);
@@ -114,7 +131,9 @@ public sealed class AppleVectorFile
             Convert.FromBase64String(Text(attestation, "attestationObject_b64")),
             Convert.FromBase64String(Text(attestation, "challenge_b64")),
             Convert.FromBase64String(Text(assertion, "assertionObject_b64")),
-            Convert.FromBase64String(Text(assertion, "clientDataHash_b64")));
+            Convert.FromBase64String(Text(assertion, "clientDataHash_b64")),
+            Convert.FromBase64String(Text(assertion, "requestBody_b64")),
+            Convert.FromBase64String(Text(assertion, "nonce_b64")));
     }
 
     private static JsonElement Property(JsonElement parent, string name)
