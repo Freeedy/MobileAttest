@@ -448,6 +448,14 @@ public class AndroidKeyAttestationVerifierTests
                 AllowedSignatureDigests = new[] { allowedDigestHex },
                 RequireStrongBox = false,
                 PinnedRootCertificates = new[] { Anchor },
+
+                // Stated, because there is no default and a configuration that omits this is
+                // refused with RevocationStatusUnavailable before it can succeed. Skip is the
+                // honest choice here: these tests are about the chain, the extension and the
+                // policy, no status source is wired, and this says so rather than quietly
+                // relying on revocation not being consulted. The revocation behaviour itself
+                // is covered in KeyStatusTests, without a vector.
+                RevocationPolicy = RevocationPolicy.Skip,
             };
 
         public AndroidAttestationRequest Request(ReadOnlyMemory<byte> expectedChallenge) =>

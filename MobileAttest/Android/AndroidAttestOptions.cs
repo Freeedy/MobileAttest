@@ -42,11 +42,52 @@ public sealed class AndroidAttestOptions
         Array.Empty<X509Certificate>();
 
     /// <summary>
+    /// What to do when the status of an attestation key cannot be established. There is no
+    /// default: the caller selects one, and <see cref="Validate"/> rejects a configuration
+    /// that did not.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The property is nullable so that "not selected" is a state the type can hold and
+    /// report. Were it a plain
+    /// <see cref="MobileAttest.Android.RevocationPolicy"/>, a caller who never assigned it
+    /// would receive whichever value happened to be zero, and would be running a revocation
+    /// policy nobody chose -- the silent configuration this library exists to refuse. It is
+    /// the same rule that makes an unpinned root a rejection rather than a fallback.
+    /// </para>
+    /// <para>
+    /// The policy governs <see cref="KeyStatus.Unknown"/> only. A key reported as
+    /// <see cref="KeyStatus.Revoked"/> or <see cref="KeyStatus.Suspended"/> is refused under
+    /// either value.
+    /// </para>
+    /// </remarks>
+    public RevocationPolicy? RevocationPolicy { get; set; }
+
+    /// <summary>
+    /// How long a key status answer stays usable before it is looked up again. Defaults to
+    /// 24 hours.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Read by <see cref="CachedKeyStatusSource"/>, which is the only thing in this library
+    /// that caches. A source used without that wrapper is called once per verification and
+    /// this value does nothing.
+    /// </para>
+    /// <para>
+    /// Every answer is cached for this long, <see cref="KeyStatus.Unknown"/> included. So the
+    /// value is also the longest a status service can stay unreachable, recover, and go on
+    /// being treated as unreachable. Shorten it where that matters more than the request
+    /// volume it saves.
+    /// </para>
+    /// </remarks>
+    public TimeSpan StatusCacheTtl { get; set; } = TimeSpan.FromHours(24);
+
+    /// <summary>
     /// Rejects a configuration that would make verification meaningless.
     /// </summary>
     /// <remarks>
-    /// Checks run in declaration order -- signing digests, then pinned roots -- and the
-    /// first violation stops validation.
+    /// Checks run in declaration order -- signing digests, then pinned roots, then the
+    /// revocation policy -- and the first violation stops validation.
     /// </remarks>
     /// <exception cref="InvalidOperationException">The configuration is incomplete.</exception>
     public void Validate()
@@ -81,6 +122,22 @@ public sealed class AndroidAttestOptions
             throw new InvalidOperationException(
                 $"{nameof(AndroidAttestOptions)}.{nameof(PinnedRootCertificates)} must contain at " +
                 "least one root; without a pinned root a chain is validated against nothing.");
+        }
+
+        if (RevocationPolicy is null)
+        {
+            // Named last because it is the newest requirement, and a caller upgrading into it
+            // should see the two older faults first if they are also present.
+            //
+            // There is no default to fall back on. Choosing one here -- either one -- would be
+            // this library deciding how much an unverifiable key is worth to a deployment it
+            // knows nothing about, and the caller would never learn a decision had been made.
+            throw new InvalidOperationException(
+                $"{nameof(AndroidAttestOptions)}.{nameof(RevocationPolicy)} must be set to " +
+                $"{nameof(MobileAttest.Android.RevocationPolicy.Skip)} or " +
+                $"{nameof(MobileAttest.Android.RevocationPolicy.HardFail)}. There is no default: " +
+                "whether a key whose revocation status cannot be established is accepted is the " +
+                "caller's decision, not this library's.");
         }
     }
 

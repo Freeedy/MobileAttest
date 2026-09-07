@@ -54,7 +54,13 @@ public static class TestChainBuilder
     /// <param name="notAfter">The end of the validity window. Defaults to <see cref="DefaultNotAfter"/>.</param>
     /// <param name="leafKeyAttestationExtension">
     /// Octets to place in the leaf's key attestation extension, or null to issue a leaf that
-    /// carries no such extension.
+    /// carries no such extension. <b>They do not arrive at the parser unchanged</b> -- see the
+    /// remarks -- so this is for extensions a test expects to be rejected. To issue a leaf
+    /// whose extension actually parses, use <paramref name="leafKeyAttestationRecord"/>.
+    /// </param>
+    /// <param name="leafKeyAttestationRecord">
+    /// A DER-encoded KeyDescription to place in the leaf's key attestation extension so that it
+    /// reads back byte for byte, or null to add no such extension.
     /// </param>
     /// <param name="leafAppleNonceExtension">
     /// Builds the octets for the leaf's Apple attestation nonce extension from the leaf's own
@@ -62,19 +68,37 @@ public static class TestChainBuilder
     /// </param>
     /// <returns>The built hierarchy.</returns>
     /// <remarks>
+    /// <para>
+    /// <b>Measured</b>, on BouncyCastle 2.7.0: the generator's <c>byte[]</c> extension overload
+    /// treats its argument as the content of the extension's OCTET STRING and wraps it again,
+    /// so what a parser later reads out of the certificate is <c>04 &lt;len&gt; input</c> and
+    /// not <c>input</c>. A valid KeyDescription passed that way comes back as a malformed one.
+    /// That is why <paramref name="leafKeyAttestationRecord"/> exists as a separate parameter
+    /// rather than as a nicer name for the same thing: it takes the
+    /// <c>Asn1Encodable</c> route, which puts the exact octets in the certificate, and it
+    /// refuses input the encoder would not reproduce verbatim.
+    /// </para>
+    /// <para>
+    /// The two are not interchangeable and both are needed. A test that wants an extension the
+    /// parser must reject has to be able to write bytes no encoder would produce, and a test
+    /// that wants a leaf which verifies has to be able to write bytes that survive the trip.
+    /// </para>
+    /// <para>
     /// The Apple extension arrives as a function of the key rather than as bytes because the
     /// two are circular in the real object: the nonce covers the authenticator data, the
     /// authenticator data carries the credential identifier, and the credential identifier is
     /// a digest of this very key. A caller that were handed the certificate first and asked
     /// to add the extension afterwards would be describing a different key than the one the
     /// certificate attests, which is exactly the mismatch these tests exist to detect.
+    /// </para>
     /// </remarks>
     public static TestChain Create(
         string name = "MobileAttest Test",
         DateTime? notBefore = null,
         DateTime? notAfter = null,
         byte[]? leafKeyAttestationExtension = null,
-        Func<AsymmetricKeyParameter, byte[]>? leafAppleNonceExtension = null)
+        Func<AsymmetricKeyParameter, byte[]>? leafAppleNonceExtension = null,
+        byte[]? leafKeyAttestationRecord = null)
     {
         ArgumentNullException.ThrowIfNull(name);
 
@@ -99,7 +123,8 @@ public static class TestChainBuilder
                 intermediate.Certificate,
                 intermediate.KeyPair.Private,
                 leafKeyAttestationExtension,
-                leafAppleNonceExtension);
+                leafAppleNonceExtension,
+                leafKeyAttestationRecord);
 
         return new TestChain(root.Certificate, intermediate.Certificate, leaf.Certificate, from, to);
     }
@@ -113,7 +138,8 @@ public static class TestChainBuilder
         X509Certificate? issuer,
         AsymmetricKeyParameter? issuerKey,
         byte[]? keyAttestationExtension = null,
-        Func<AsymmetricKeyParameter, byte[]>? appleNonceExtension = null)
+        Func<AsymmetricKeyParameter, byte[]>? appleNonceExtension = null,
+        byte[]? keyAttestationRecord = null)
     {
         ECKeyPairGenerator keyGenerator = new ECKeyPairGenerator();
         keyGenerator.Init(new KeyGenerationParameters(random, KeySizeBits));
@@ -151,6 +177,28 @@ public static class TestChainBuilder
                 AndroidOids.KeyAttestationExtension,
                 critical: false,
                 keyAttestationExtension);
+        }
+
+        if (keyAttestationRecord is not null)
+        {
+            // The exact-octets route, for the same reason the Apple extension below uses it:
+            // the byte[] overload adds a layer, and a leaf built with it can never carry a
+            // record the parser accepts. The round-trip guard refuses input the encoder would
+            // rewrite, so a record that reaches the certificate is the record that was written.
+            Asn1Object record = Asn1Object.FromByteArray(keyAttestationRecord);
+
+            if (!record.GetDerEncoded().SequenceEqual(keyAttestationRecord))
+            {
+                throw new ArgumentException(
+                    "The certificate encoder would not reproduce this record verbatim. A record " +
+                    "meant to be rejected belongs in keyAttestationExtension instead.",
+                    nameof(keyAttestationRecord));
+            }
+
+            generator.AddExtension(
+                new DerObjectIdentifier(AndroidOids.KeyAttestationExtension),
+                critical: false,
+                record);
         }
 
         if (appleNonceExtension is not null)

@@ -56,10 +56,10 @@ team identifier, an empty bundle allowlist, or an empty root list. An empty allo
 not "allow nothing", it is "compare against nothing", which accepts every application. An
 empty root list leaves a chain pinned to nothing.
 
-`AndroidAttestOptions` follows the same rule, over its signing digest allowlist and its
-pinned roots. `RequireStrongBox` defaults to `false`, because StrongBox is absent on many
-devices and requiring it excludes hardware; a trusted execution environment remains the
-minimum either way.
+`AndroidAttestOptions` follows the same rule, over its signing digest allowlist, its pinned
+roots and its revocation policy. `RequireStrongBox` defaults to `false`, because StrongBox is
+absent on many devices and requiring it excludes hardware; a trusted execution environment
+remains the minimum either way.
 
 ### Verify an Apple App Attest attestation
 
@@ -203,6 +203,7 @@ AndroidAttestOptions android = new AndroidAttestOptions
     AllowedSignatureDigests = new[] { yourSigningCertificateDigest },
     RequireStrongBox = false,
     PinnedRootCertificates = roots,
+    RevocationPolicy = RevocationPolicy.Skip,
 };
 android.Validate();
 
@@ -246,6 +247,76 @@ the second constructor to read it against your own:
 ```csharp
 IAttestationVerifier pinnedClock = new AndroidKeyAttestationVerifier(android, timeProvider);
 ```
+
+#### Decide what an unverifiable key is worth
+
+`RevocationPolicy` has no default. Leave it unset and `Validate()` refuses the configuration,
+because the alternative is running whichever policy happened to be the zero value without ever
+being told. There are two choices and you make one:
+
+- `RevocationPolicy.Skip` — a key whose status could not be established is accepted, and
+  verification carries on. This is the choice for a deployment that has no network access, or
+  that treats revocation as advisory.
+- `RevocationPolicy.HardFail` — a key whose status could not be established is refused, with
+  `RevocationStatusUnavailable`.
+
+A key the source reports as revoked or suspended is refused under **both**, with
+`CertificateRevoked`. The policy decides what silence is worth; it never overrules an answer.
+
+Nothing is looked up unless you supply a source. Without one, `NullKeyStatusSource` answers
+"unknown" to everything and no network is touched — so `HardFail` with no source refuses every
+verification, on the first request rather than quietly. That pairing is a mistake, and it is
+meant to be an obvious one.
+
+#### Supply the status source, the client and the address
+
+The library creates no `HttpClient` and holds no address. Both are yours: the client's lifetime
+governs socket exhaustion and DNS refresh, which belong to your application, and the address is
+stated by your deployment rather than compiled in here.
+
+```csharp
+GoogleKeyStatusSource status = new GoogleKeyStatusSource(
+    yourHttpClient,
+    new Uri("https://android.googleapis.com/attestation/status"));   // an example address
+
+IAttestationVerifier verifier = new AndroidKeyAttestationVerifier(
+    android,
+    timeProvider,
+    new CachedKeyStatusSource(status, android.StatusCacheTtl, timeProvider));
+```
+
+The address above is an example of the shape, not a value the library falls back to. Configure
+the one your deployment should query.
+
+`GoogleKeyStatusSource` expects a document of this shape, and reads a serial number that is
+absent from `entries` as "not listed, therefore good":
+
+```json
+{ "entries": { "1a2b3c4d": { "status": "REVOKED" } } }
+```
+
+Keys are the certificate serial number in lower-case hexadecimal, with no leading zeroes.
+
+An unreachable host, a timed-out request, an error status code and a body that will not parse
+all come back as "unknown" rather than as an exception, so a status service that is down
+becomes your policy decision instead of a failed request. Cancelling the token you passed is
+the exception: that is propagated, because you asked for the work to stop.
+
+`IKeyStatusSource` is an interface. Implement it to read a list you host yourself, one you
+already hold in memory, or one behind a different protocol.
+
+#### Cache, or ask on every single request
+
+`CachedKeyStatusSource` holds each answer for `AndroidAttestOptions.StatusCacheTtl`, which
+defaults to 24 hours. Without it, every verification issues a request.
+
+Every answer is cached for that period, "unknown" included. That is what stops an unresponsive
+service from being hammered once per verification, and it has a cost worth knowing: after the
+service recovers, an "unknown" that is still held stands until it expires, and under `HardFail`
+that means continued refusals. So the time-to-live is also the longest a recovery can go
+unnoticed. Shorten it where that matters more than the requests it saves.
+
+Pass the same `TimeProvider` you gave the verifier, so both read one clock.
 
 ### Say which message authenticator data came from
 

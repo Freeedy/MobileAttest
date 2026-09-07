@@ -37,17 +37,21 @@ namespace MobileAttest.Android;
 /// exception out of a request path -- and the one mistake that matters most, an empty anchor
 /// set, is already a rejection here rather than a pass.
 /// </para>
-/// <para><b>Revocation is not consulted</b></para>
+/// <para><b>Revocation is consulted only through a source the caller supplied</b></para>
 /// <para>
-/// Nothing in this method touches the network. Google's attestation revocation status list is
-/// a separate mechanism with its own source and its own failure modes, and it is not part of
-/// this type.
+/// This type creates no <see cref="System.Net.Http.HttpClient"/> and holds no address. A
+/// verifier built without an <see cref="IKeyStatusSource"/> uses
+/// <see cref="NullKeyStatusSource"/> and touches no network at all, so the step is present in
+/// every configuration and reaches outside the process in none but the ones a caller wired.
+/// What an unestablished status costs is then decided by
+/// <see cref="AndroidAttestOptions.RevocationPolicy"/>.
 /// </para>
 /// </remarks>
 public sealed class AndroidKeyAttestationVerifier : IAttestationVerifier
 {
     private readonly AndroidAttestOptions _options;
     private readonly ICertificateChainValidator _chainValidator;
+    private readonly IKeyStatusSource _statusSource;
 
     /// <summary>Creates a verifier reading certificate validity against the system clock.</summary>
     /// <param name="options">The caller's policy, including the pinned roots.</param>
@@ -67,7 +71,26 @@ public sealed class AndroidKeyAttestationVerifier : IAttestationVerifier
     /// exactly like a defect in this code rather than like an expired input.
     /// </remarks>
     public AndroidKeyAttestationVerifier(AndroidAttestOptions options, TimeProvider timeProvider)
-        : this(options, new PkixChainValidator(timeProvider))
+        : this(options, timeProvider, NullKeyStatusSource.Instance)
+    {
+    }
+
+    /// <summary>
+    /// Creates a verifier reading certificate validity against a supplied clock and key status
+    /// from a supplied source.
+    /// </summary>
+    /// <param name="options">The caller's policy, including the pinned roots.</param>
+    /// <param name="timeProvider">The clock certificate validity dates are read against.</param>
+    /// <param name="statusSource">
+    /// Where key revocation status is looked up. Wrap it in <see cref="CachedKeyStatusSource"/>
+    /// to stop one lookup happening per verification.
+    /// </param>
+    /// <exception cref="ArgumentNullException">An argument is <see langword="null"/>.</exception>
+    public AndroidKeyAttestationVerifier(
+        AndroidAttestOptions options,
+        TimeProvider timeProvider,
+        IKeyStatusSource statusSource)
+        : this(options, new PkixChainValidator(timeProvider), statusSource)
     {
     }
 
@@ -75,9 +98,26 @@ public sealed class AndroidKeyAttestationVerifier : IAttestationVerifier
     /// <param name="options">The caller's policy, including the pinned roots.</param>
     /// <param name="chainValidator">The engine that validates the device chain against the pinned roots.</param>
     /// <exception cref="ArgumentNullException">An argument is <see langword="null"/>.</exception>
+    /// <remarks>
+    /// No status source, so <see cref="NullKeyStatusSource"/> answers and nothing here reaches
+    /// the network.
+    /// </remarks>
     public AndroidKeyAttestationVerifier(
         AndroidAttestOptions options,
         ICertificateChainValidator chainValidator)
+        : this(options, chainValidator, NullKeyStatusSource.Instance)
+    {
+    }
+
+    /// <summary>Creates a verifier over a supplied chain validator and key status source.</summary>
+    /// <param name="options">The caller's policy, including the pinned roots.</param>
+    /// <param name="chainValidator">The engine that validates the device chain against the pinned roots.</param>
+    /// <param name="statusSource">Where key revocation status is looked up.</param>
+    /// <exception cref="ArgumentNullException">An argument is <see langword="null"/>.</exception>
+    public AndroidKeyAttestationVerifier(
+        AndroidAttestOptions options,
+        ICertificateChainValidator chainValidator,
+        IKeyStatusSource statusSource)
     {
         if (options is null)
         {
@@ -89,8 +129,18 @@ public sealed class AndroidKeyAttestationVerifier : IAttestationVerifier
             throw new ArgumentNullException(nameof(chainValidator));
         }
 
+        if (statusSource is null)
+        {
+            // A null source is not quietly replaced with the empty one. The caller who passes
+            // null meant to pass a source, and substituting one that answers Unknown to
+            // everything would turn that mistake into either an unchecked deployment or a
+            // total refusal, depending on a policy set somewhere else entirely.
+            throw new ArgumentNullException(nameof(statusSource));
+        }
+
         _options = options;
         _chainValidator = chainValidator;
+        _statusSource = statusSource;
     }
 
     /// <inheritdoc />
@@ -98,11 +148,20 @@ public sealed class AndroidKeyAttestationVerifier : IAttestationVerifier
 
     /// <inheritdoc />
     /// <remarks>
-    /// The work is synchronous and the token is accepted only to satisfy the contract: this
-    /// implementation performs no I/O, so there is nothing to abandon partway. Throwing on a
-    /// cancelled token would add an exception the contract does not declare.
+    /// <para>
+    /// Every step but one is computation over the bytes the device sent. The exception is the
+    /// key status lookup, which reaches whatever <see cref="IKeyStatusSource"/> the caller
+    /// supplied and is where the token is honoured -- so a verifier built without a source
+    /// still performs no I/O, and one built with a remote source can be abandoned partway.
+    /// </para>
+    /// <para>
+    /// An exception thrown by the caller's own status source is not caught here. A source that
+    /// fails in a way it expects reports <see cref="KeyStatus.Unknown"/>; one that throws has
+    /// met something it did not expect, and burying that in a rejection would hide a defect in
+    /// the caller's code behind what looks like a device problem.
+    /// </para>
     /// </remarks>
-    public Task<AttestationResult> VerifyAsync(
+    public async Task<AttestationResult> VerifyAsync(
         AttestationRequest request,
         CancellationToken cancellationToken = default)
     {
@@ -111,10 +170,12 @@ public sealed class AndroidKeyAttestationVerifier : IAttestationVerifier
             throw new ArgumentNullException(nameof(request));
         }
 
-        return Task.FromResult(Verify(request));
+        return await VerifyCoreAsync(request, cancellationToken).ConfigureAwait(false);
     }
 
-    private AttestationResult Verify(AttestationRequest request)
+    private async Task<AttestationResult> VerifyCoreAsync(
+        AttestationRequest request,
+        CancellationToken cancellationToken)
     {
         if (request is not AndroidAttestationRequest android)
         {
@@ -159,6 +220,19 @@ public sealed class AndroidKeyAttestationVerifier : IAttestationVerifier
             return AttestationResult.Failure(Platform.Android, policyFailure);
         }
 
+        // Last, and only on a chain that has already been proven to reach a pinned root and to
+        // satisfy the policy. Asking a remote service about a serial number from a chain that
+        // was never going to be accepted would send the caller's traffic -- and the device
+        // identifiers in it -- somewhere on behalf of an attestation already known to be
+        // worthless.
+        AttestationFailureReason statusFailure =
+            await EvaluateKeyStatusAsync(leaf, cancellationToken).ConfigureAwait(false);
+
+        if (statusFailure != AttestationFailureReason.None)
+        {
+            return AttestationResult.Failure(Platform.Android, statusFailure);
+        }
+
         // The SubjectPublicKeyInfo exactly as the certificate carries it, not a re-encoding of
         // the decoded key: a caller that computes this identifier from the same certificate
         // somewhere else has to arrive at the same bytes.
@@ -179,6 +253,58 @@ public sealed class AndroidKeyAttestationVerifier : IAttestationVerifier
             // Android key attestation carries no signature counter and issues no receipt.
             signCount: 0,
             receipt: ReadOnlyMemory<byte>.Empty);
+    }
+
+    /// <summary>
+    /// Looks the leaf's key up in the configured status source and turns the answer into a
+    /// rejection or a pass.
+    /// </summary>
+    /// <remarks>
+    /// <para><b>A positive answer is not a policy question</b></para>
+    /// <para>
+    /// <see cref="KeyStatus.Revoked"/> and <see cref="KeyStatus.Suspended"/> are refused under
+    /// every policy, and both report
+    /// <see cref="AttestationFailureReason.CertificateRevoked"/>. The policy exists to say what
+    /// silence is worth, not to overrule a source that answered.
+    /// </para>
+    /// <para><b>Everything that is not an answer is treated as silence</b></para>
+    /// <para>
+    /// <see cref="KeyStatus.Unknown"/> and any value the enumeration does not name arrive here
+    /// together. A source returning something undefined has not established that the key is
+    /// good, so it is handled as though it had said nothing -- never as
+    /// <see cref="KeyStatus.Valid"/>.
+    /// </para>
+    /// <para><b>Only an explicit Skip continues</b></para>
+    /// <para>
+    /// The test is "did the caller select <see cref="RevocationPolicy.Skip"/>", not "is this
+    /// anything other than <see cref="RevocationPolicy.HardFail"/>". So an options object whose
+    /// policy was never set -- one that never went through
+    /// <see cref="AndroidAttestOptions.Validate"/>, which would have refused it -- ends in a
+    /// rejection rather than in the lenient branch. There is nowhere in this path where a
+    /// missing decision becomes a pass.
+    /// </para>
+    /// </remarks>
+    private async Task<AttestationFailureReason> EvaluateKeyStatusAsync(
+        X509Certificate leaf,
+        CancellationToken cancellationToken)
+    {
+        KeyStatus status = await _statusSource
+            .GetStatusAsync(leaf.SerialNumber, cancellationToken)
+            .ConfigureAwait(false);
+
+        if (status == KeyStatus.Revoked || status == KeyStatus.Suspended)
+        {
+            return AttestationFailureReason.CertificateRevoked;
+        }
+
+        if (status == KeyStatus.Valid)
+        {
+            return AttestationFailureReason.None;
+        }
+
+        return _options.RevocationPolicy == RevocationPolicy.Skip
+            ? AttestationFailureReason.None
+            : AttestationFailureReason.RevocationStatusUnavailable;
     }
 
     /// <summary>Copies the request's chain into the form the chain validator takes.</summary>
