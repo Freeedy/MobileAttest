@@ -344,15 +344,90 @@ its own validation rules by truncating its input.
 `TryParse` returns `false` for malformed input instead of throwing. It throws only for an
 undefined shape, which is a mistake in your code rather than in the data.
 
+### Verify a signature made by an attested key
+
+Attestation is answered once, at enrollment. Every request after it asks a different
+question: did that same key sign these bytes.
+
+```csharp
+SignatureVerificationResult result = DeviceSignature.Verify(
+    signature:    popFromTheDevice,        // DER ECDSA, as SHA256withECDSA produces
+    signedData:   nonceYouIssued,          // whatever you decided to bind
+    publicKeyDer: record.PublicKeyDer);    // what attestation returned, from your store
+
+if (!result.IsValid)
+{
+    return Unauthorized();
+}
+```
+
+`signedData` is any length; the digest is taken inside, exactly as the signing side takes
+it, so you are never forced to pre-hash. On Android the device produces this signature with
+`Signature.getInstance("SHA256withECDSA")` over the same bytes.
+
+#### The algorithm is yours to state, and defaults to ECDSA-SHA256
+
+```csharp
+DeviceSignature.Verify(signature, signedData, publicKeyDer);                     // the default
+DeviceSignature.Verify(signature, signedData, publicKeyDer,
+                       DeviceSignatureAlgorithm.EcdsaSha256);                    // the same, named
+```
+
+The value comes from you. It is never read from the signature, from the key, or from
+anything else a request carries — a verifier that takes its algorithm from
+attacker-influenced input can be talked into a weaker check, and the way to close that is to
+leave nowhere for such a value to enter.
+
+An **unset** value is refused rather than defaulted. Zero is not a member of the
+enumeration, so a column that was never populated fails loudly instead of being read as
+`EcdsaSha256` and hiding the mistake.
+
+SHA-256 is the match rather than a floor. ECDSA truncates the digest to the bit length of
+the group order, which is 256 for P-256, so a longer hash is cut back to its leftmost 256
+bits: more work, no more security. It is also what the material itself uses — both
+platforms' device certificates are signed `ecdsa-with-SHA256`, and Apple's assertions are
+ECDSA-SHA256 with no alternative offered. Strengthening this one step above the certificate
+that vouches for the key would move nothing.
+
+The key must be EC; an RSA key supplied as `publicKeyDer` is refused rather than verified.
+The curve itself is **not** pinned — any EC curve is accepted with SHA-256. That is
+deliberate: the public key is not attacker-supplied, it is read back from your own store
+after attestation put it there, so pinning the curve would add a way to fail without adding
+a defence.
+
+If another algorithm is ever needed, it belongs in an explicit parameter or a separate
+method — never in a value taken from the request.
+
+**Three things this does not do**, each of them yours:
+
+- **It does not know what the bytes meant.** A nonce, a request digest, a
+  domain-separated message — all the same here. That keeps the library out of your
+  protocol, and it means a signature made for one operation is not distinguished from one
+  made for another. See the next section for the tool, and note that using it is your
+  choice.
+- **It does not know whether the signature was fresh.** Nothing in the bytes says when they
+  were signed. A value you issued, stored and accept only once is what makes a verified
+  signature mean *now*.
+- **It does not take Apple assertions.** An App Attest assertion is a small CBOR envelope,
+  not a bare signature, and its counter and application identity are checked as part of the
+  assertion. Use `AppleAssertionVerifier` for those.
+
 ### Bind a proof-of-possession signature to one operation
 
 ```csharp
 byte[] digest = AnchorSignatureContext.CreateDigest(AnchorPurpose.AuthToken, payload);
+byte[] pop = /* the device signs `digest` */;
+
+bool ok = DeviceSignature.Verify(pop, digest, record.PublicKeyDer).IsValid;
 ```
 
 The digest covers a protocol label and the purpose as well as the payload, so a signature
 made for one operation does not verify as another. Both sides build the message the same
 way; this type neither signs nor verifies.
+
+It is **optional**. `DeviceSignature.Verify` never sees a purpose and cannot ask for one —
+sign the bare payload instead and the signature still verifies, under any name. The
+separation lives in the bytes you chose to sign, not in the verifier.
 
 ## Dependencies
 
