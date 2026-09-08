@@ -1,5 +1,8 @@
 name: Unlist a version
 
+# The version is an input here, so the run says exactly which one it touched.
+run-name: Unlist ${{ inputs.version }}
+
 # nuget.org does not delete. This hides a version from search and from version
 # resolution; anyone who already knows the exact version can still restore it.
 # Actual removal exists only for a security incident, through nuget.org support.

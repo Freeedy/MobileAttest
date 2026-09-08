@@ -1,5 +1,10 @@
 name: Release
 
+# The run name is evaluated when the run starts, so it can only see the inputs. The
+# version is worked out later, from nuget.org, and therefore cannot appear here -- it
+# appears in the run summary, the tag and the release instead.
+run-name: Release · ${{ inputs.bump }}${{ inputs.suffix && format(' · {0}', inputs.suffix) || '' }}
+
 # One input drives three things: the package version, the git tag and the GitHub
 # release. They cannot drift apart because they are the same value.
 on:
