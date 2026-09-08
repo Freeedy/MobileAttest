@@ -39,8 +39,13 @@
     <SymbolPackageFormat>snupkg</SymbolPackageFormat>
   </PropertyGroup>
 
+  <!--
+    The package readme is the repository readme, so the NuGet listing and the GitHub
+    landing page say the same thing and neither drifts. The detailed reference stays
+    beside the code and is linked from it.
+  -->
   <ItemGroup>
-    <None Include="README.md" Pack="true" PackagePath="\" />
+    <None Include="../README.md" Pack="true" PackagePath="\" />
   </ItemGroup>
 
   <ItemGroup>
