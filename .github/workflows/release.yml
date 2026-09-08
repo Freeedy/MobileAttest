@@ -1,9 +1,9 @@
 name: Release
 
-# The run name is evaluated when the run starts, so it can only see the inputs. The
-# version is worked out later, from nuget.org, and therefore cannot appear here -- it
-# appears in the run summary, the tag and the release instead.
-run-name: Release · ${{ inputs.bump }}${{ inputs.suffix && format(' · {0}', inputs.suffix) || '' }}
+# No run-name here. It is evaluated when the run starts, so it sees only the inputs,
+# and the version is worked out later from nuget.org. A name carrying the bump instead
+# of the version would be worse than the default: it looks like a version and is not
+# one. The version appears where it is exact -- the run summary, the tag, the release.
 
 # One input drives three things: the package version, the git tag and the GitHub
 # release. They cannot drift apart because they are the same value.
