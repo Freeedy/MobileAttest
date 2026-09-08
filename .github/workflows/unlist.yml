@@ -3,6 +3,12 @@ name: Unlist a version
 # nuget.org does not delete. This hides a version from search and from version
 # resolution; anyone who already knows the exact version can still restore it.
 # Actual removal exists only for a security incident, through nuget.org support.
+#
+# This one still uses an API key, unlike the release workflow. Trusted publishing
+# issues a key whose documented scopes are about publishing packages and versions;
+# whether it also covers unlisting is not stated, and this is not the workflow to
+# find out on. An unlist is rare and deliberate, so a key kept for it is a small
+# surface. Set NUGET_API_KEY only if you want this workflow available.
 on:
   workflow_dispatch:
     inputs:
