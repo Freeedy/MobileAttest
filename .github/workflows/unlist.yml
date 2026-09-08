@@ -49,14 +49,15 @@ jobs:
         run: |
           set -euo pipefail
           ID=$(echo "${{ env.PACKAGE_ID }}" | tr '[:upper:]' '[:lower:]')
-          BODY=$(curl -sf "https://api.nuget.org/v3-flatcontainer/${ID}/index.json") || {
+          # Carriage returns stripped at the source; the response is CRLF.
+          BODY=$(curl -sf "https://api.nuget.org/v3-flatcontainer/${ID}/index.json" | tr -d '\r') || {
             echo "::error::No versions of ${{ env.PACKAGE_ID }} are published."
             exit 1
           }
           if ! echo "$BODY" | grep -qF "\"${{ inputs.version }}\""; then
             echo "::error::${{ inputs.version }} is not published."
             echo "Published versions:"
-            echo "$BODY" | tr -d ' "[]{}' | tr ',' '\n' | sed 's/^versions://' | grep -v '^$'
+            echo "$BODY" | tr -d ' "[]{}' | tr ',' '\n' | sed 's/^versions://' | grep -v '^$'
             exit 1
           fi
 

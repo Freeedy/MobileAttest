@@ -57,8 +57,12 @@ jobs:
 
           # A package that has never been published answers 404. That is a first
           # release, not a failure.
-          if BODY=$(curl -sf "$URL"); then
-            ALL=$(echo "$BODY" | tr -d ' "[]{}' | tr ',' '\n' | sed 's/^versions://' | grep -v '^$')
+          # The response arrives with CRLF line endings. Carriage returns are stripped
+          # here, at the one place the body enters, because a stray \r survives every
+          # later step and first shows itself inside $(( )), as an arithmetic syntax
+          # error that names nothing. pipefail is set, so curl still decides the branch.
+          if BODY=$(curl -sf "$URL" | tr -d '\r'); then
+            ALL=$(echo "$BODY" | tr -d ' "[]{}' | tr ',' '\n' | sed 's/^versions://' | grep -v '^$')
             LATEST=$(echo "$ALL" | grep -v -- '-' | sort -t. -k1,1n -k2,2n -k3,3n | tail -1)
             echo "Published: $(echo "$ALL" | tr '\n' ' ')"
           else
@@ -115,14 +119,18 @@ jobs:
       - name: Restore
         run: dotnet restore --locked-mode
 
+      # The version is given to every step, not only to pack. Building without it and
+      # packing with it leaves an assembly that reports one version inside a package
+      # that claims another, and makes --no-build evaluate different properties than
+      # the build did.
       - name: Build
-        run: dotnet build -c Release --no-restore
+        run: dotnet build -c Release --no-restore -p:Version=${{ steps.v.outputs.version }}
 
       # Device vectors are deliberately not in the repository, so the tests that need
       # one are skipped here, each naming the path it looked for. Everything else runs.
       - name: Test
         if: ${{ inputs.runTests }}
-        run: dotnet test -c Release --no-build --verbosity normal
+        run: dotnet test -c Release --no-build -p:Version=${{ steps.v.outputs.version }} --verbosity normal
 
       - name: Pack
         run: |
