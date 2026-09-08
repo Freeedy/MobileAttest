@@ -8,12 +8,44 @@
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <EnforceCodeStyleInBuild>false</EnforceCodeStyleInBuild>
-    <IsPackable>false</IsPackable>
+    <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+  </PropertyGroup>
+
+  <!--
+    Package metadata.
+
+    The dependencies below carry a minimum rather than an exact version. An exact pin
+    reproduces nothing a lock file does not reproduce better, because NuGet resolves a bare
+    version to the lowest that satisfies it: this project still restores 2.7.0 and 10.0.11.
+    A pin does, however, reach into every consuming project and warn there, or fail
+    outright where warnings are errors. Reproducibility is handled by
+    RestorePackagesWithLockFile above and the packages.lock.json it writes, which pins the
+    transitive closure as well and shows any change as a diff.
+  -->
+  <PropertyGroup>
+    <IsPackable>true</IsPackable>
+    <PackageId>MobileAttest</PackageId>
+    <Version>0.1.0</Version>
+    <Authors>Farid Ismayilzada</Authors>
+    <Copyright>© 2026 Farid Ismayilzada</Copyright>
+    <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
+    <PackageProjectUrl>https://github.com/Freeedy/MobileAttest</PackageProjectUrl>
+    <Description>Server-side verification of mobile device attestation: Apple App Attest and Android key attestation, with one result type for both. Ships no trust roots and reaches no network of its own.</Description>
+    <PackageTags>attestation;app-attest;key-attestation;android;ios;strongbox;secure-enclave;device-integrity</PackageTags>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <RepositoryUrl>https://github.com/Freeedy/MobileAttest</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="BouncyCastle.Cryptography" Version="[2.7.0]" />
-    <PackageReference Include="System.Formats.Cbor" Version="[10.0.11]" />
+    <None Include="README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="BouncyCastle.Cryptography" Version="2.7.0" />
+    <PackageReference Include="System.Formats.Cbor" Version="10.0.11" />
   </ItemGroup>
 
   <ItemGroup>
