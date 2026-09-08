@@ -1,0 +1,70 @@
+name: Unlist a version
+
+# nuget.org does not delete. This hides a version from search and from version
+# resolution; anyone who already knows the exact version can still restore it.
+# Actual removal exists only for a security incident, through nuget.org support.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to unlist (e.g. 0.1.0 or 0.1.0-beta.1)'
+        required: true
+        type: string
+      confirm:
+        description: 'Type the same version again to confirm'
+        required: true
+        type: string
+
+env:
+  PACKAGE_ID: MobileAttest
+
+jobs:
+  unlist:
+    runs-on: ubuntu-latest
+
+    steps:
+      # Typing it twice is the whole guard. A workflow that unlists on one click
+      # is a workflow that will one day unlist the wrong version.
+      - name: Confirm
+        run: |
+          set -euo pipefail
+          if [ "${{ inputs.version }}" != "${{ inputs.confirm }}" ]; then
+            echo "::error::Confirmation does not match the version."
+            exit 1
+          fi
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Refuse a version that is not published
+        run: |
+          set -euo pipefail
+          ID=$(echo "${{ env.PACKAGE_ID }}" | tr '[:upper:]' '[:lower:]')
+          BODY=$(curl -sf "https://api.nuget.org/v3-flatcontainer/${ID}/index.json") || {
+            echo "::error::No versions of ${{ env.PACKAGE_ID }} are published."
+            exit 1
+          }
+          if ! echo "$BODY" | grep -qF "\"${{ inputs.version }}\""; then
+            echo "::error::${{ inputs.version }} is not published."
+            echo "Published versions:"
+            echo "$BODY" | tr -d ' "[]{}' | tr ',' '\n' | sed 's/^versions://' | grep -v '^$'
+            exit 1
+          fi
+
+      # The command is called delete; on nuget.org it unlists.
+      - name: Unlist
+        run: |
+          dotnet nuget delete ${{ env.PACKAGE_ID }} ${{ inputs.version }} \
+            --source https://api.nuget.org/v3/index.json \
+            --api-key "${{ secrets.NUGET_API_KEY }}" \
+            --non-interactive
+
+      - name: Say what happened
+        run: |
+          echo "### Unlisted ${{ env.PACKAGE_ID }} ${{ inputs.version }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "It no longer appears in search or version resolution." >> "$GITHUB_STEP_SUMMARY"
+          echo "Anyone who names the exact version can still restore it." >> "$GITHUB_STEP_SUMMARY"
+          echo "The git tag and the GitHub release are untouched." >> "$GITHUB_STEP_SUMMARY"

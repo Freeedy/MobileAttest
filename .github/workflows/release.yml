@@ -1,0 +1,157 @@
+name: Release
+
+# One input drives three things: the package version, the git tag and the GitHub
+# release. They cannot drift apart because they are the same value.
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: 'Which part of the version to raise'
+        required: true
+        type: choice
+        options: [patch, minor, major]
+        default: patch
+      suffix:
+        description: 'Prerelease suffix, empty for a stable release (e.g. beta.1)'
+        required: false
+        type: string
+        default: ''
+      runTests:
+        description: 'Run the test suite before packing'
+        required: false
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+env:
+  PACKAGE_ID: MobileAttest
+  PROJECT: MobileAttest/MobileAttest.csproj
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # tags are needed to refuse a version already released
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      # The version is derived, not typed. nuget.org is the base rather than the git
+      # tags because it is the irreversible record: a version published there holds its
+      # number forever, and an unlisted one still holds it.
+      - name: Work out the version
+        id: v
+        run: |
+          set -euo pipefail
+          ID=$(echo "${{ env.PACKAGE_ID }}" | tr '[:upper:]' '[:lower:]')
+          URL="https://api.nuget.org/v3-flatcontainer/${ID}/index.json"
+
+          # A package that has never been published answers 404. That is a first
+          # release, not a failure.
+          if BODY=$(curl -sf "$URL"); then
+            ALL=$(echo "$BODY" | tr -d ' "[]{}' | tr ',' '\n' | sed 's/^versions://' | grep -v '^$')
+            LATEST=$(echo "$ALL" | grep -v -- '-' | sort -t. -k1,1n -k2,2n -k3,3n | tail -1)
+            echo "Published: $(echo "$ALL" | tr '\n' ' ')"
+          else
+            LATEST=""
+            echo "Nothing published yet."
+          fi
+
+          if [ -z "$LATEST" ]; then
+            BASE="0.1.0"
+            echo "No stable version to build on; starting at $BASE"
+          else
+            MAJOR=${LATEST%%.*}
+            REST=${LATEST#*.}
+            MINOR=${REST%%.*}
+            PATCH=${REST#*.}
+            case "${{ inputs.bump }}" in
+              major) BASE="$((MAJOR + 1)).0.0" ;;
+              minor) BASE="${MAJOR}.$((MINOR + 1)).0" ;;
+              patch) BASE="${MAJOR}.${MINOR}.$((PATCH + 1))" ;;
+            esac
+            echo "Latest stable $LATEST, ${{ inputs.bump }} -> $BASE"
+          fi
+
+          VERSION="$BASE"
+          PRERELEASE=false
+          if [ -n "${{ inputs.suffix }}" ]; then
+            VERSION="${BASE}-${{ inputs.suffix }}"
+            PRERELEASE=true
+          fi
+
+          # The bump cannot collide on its own, but a repeated suffix can.
+          if [ -n "${BODY:-}" ] && echo "$BODY" | grep -qF "\"$VERSION\""; then
+            echo "::error::$VERSION is already published on nuget.org."
+            exit 1
+          fi
+
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$PRERELEASE" >> "$GITHUB_OUTPUT"
+
+          echo "### Releasing \`$VERSION\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "- previous stable: \`${LATEST:-none}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- bump: \`${{ inputs.bump }}\`" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Refuse a tag that already exists
+        run: |
+          set -euo pipefail
+          if git rev-parse "refs/tags/${{ steps.v.outputs.tag }}" >/dev/null 2>&1; then
+            echo "::error::Tag ${{ steps.v.outputs.tag }} already exists."
+            exit 1
+          fi
+
+      - name: Restore
+        run: dotnet restore --locked-mode
+
+      - name: Build
+        run: dotnet build -c Release --no-restore
+
+      # Device vectors are deliberately not in the repository, so the tests that need
+      # one are skipped here, each naming the path it looked for. Everything else runs.
+      - name: Test
+        if: ${{ inputs.runTests }}
+        run: dotnet test -c Release --no-build --verbosity normal
+
+      - name: Pack
+        run: |
+          dotnet pack ${{ env.PROJECT }} -c Release --no-build \
+            -p:Version=${{ steps.v.outputs.version }} \
+            -o ./artifacts
+
+      # Irreversible from here. nuget.org keeps a published version forever; it can be
+      # unlisted but never replaced or removed.
+      - name: Push to nuget.org
+        run: |
+          dotnet nuget push "./artifacts/*.nupkg" \
+            --source https://api.nuget.org/v3/index.json \
+            --api-key "${{ secrets.NUGET_API_KEY }}" \
+            --skip-duplicate
+
+      - name: Tag
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "${{ steps.v.outputs.tag }}" -m "${{ steps.v.outputs.version }}"
+          git push origin "${{ steps.v.outputs.tag }}"
+
+      - name: Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${{ steps.v.outputs.tag }}" \
+            ./artifacts/*.nupkg \
+            --title "${{ steps.v.outputs.version }}" \
+            --generate-notes \
+            ${{ steps.v.outputs.prerelease == 'true' && '--prerelease' || '' }}
