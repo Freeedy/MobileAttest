@@ -62,7 +62,7 @@ jobs:
           # later step and first shows itself inside $(( )), as an arithmetic syntax
           # error that names nothing. pipefail is set, so curl still decides the branch.
           if BODY=$(curl -sf "$URL" | tr -d '\r'); then
-            ALL=$(echo "$BODY" | tr -d ' "[]{}' | tr ',' '\n' | sed 's/^versions://' | grep -v '^$')
+            ALL=$(echo "$BODY" | tr -d ' "[]{}' | tr ',' '\n' | sed 's/^versions://' | grep -v '^$')
             LATEST=$(echo "$ALL" | grep -v -- '-' | sort -t. -k1,1n -k2,2n -k3,3n | tail -1)
             echo "Published: $(echo "$ALL" | tr '\n' ' ')"
           else

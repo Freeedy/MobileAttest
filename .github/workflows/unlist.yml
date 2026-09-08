@@ -57,7 +57,7 @@ jobs:
           if ! echo "$BODY" | grep -qF "\"${{ inputs.version }}\""; then
             echo "::error::${{ inputs.version }} is not published."
             echo "Published versions:"
-            echo "$BODY" | tr -d ' "[]{}' | tr ',' '\n' | sed 's/^versions://' | grep -v '^$'
+            echo "$BODY" | tr -d ' "[]{}' | tr ',' '\n' | sed 's/^versions://' | grep -v '^$'
             exit 1
           fi
 
