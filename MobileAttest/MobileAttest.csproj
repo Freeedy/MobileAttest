@@ -26,7 +26,7 @@
     <IsPackable>true</IsPackable>
     <PackageId>MobileAttest</PackageId>
     <Version>0.1.0</Version>
-    <Authors>Farid Ismayilzada</Authors>
+    <Authors>freeedy</Authors>
     <Copyright>© 2026 Farid Ismayilzada</Copyright>
     <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
     <PackageProjectUrl>https://github.com/Freeedy/MobileAttest</PackageProjectUrl>
