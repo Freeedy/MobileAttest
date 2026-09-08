@@ -53,6 +53,51 @@ android.Validate();
 Google publishes **two** active roots and a deployment needs both; Apple publishes one.
 Pin them by fingerprint, and refresh at deployment time rather than at runtime.
 
+### Serving more than one application
+
+An options object describes exactly **one** application: one team, one bundle allow list,
+one signing digest. A service that verifies for several applications keeps one set per
+application and picks it before verifying.
+
+```csharp
+// Built once at startup, from your own registry of onboarded applications.
+var verifiers = registry.ToDictionary(
+    app => app.ClientId,
+    app => new AndroidKeyAttestationVerifier(
+        new AndroidAttestOptions
+        {
+            AllowedSignatureDigests = new[] { app.SigningDigest },   // theirs, not yours
+            RequireStrongBox        = app.RequireStrongBox,
+            PinnedRootCertificates  = googleRoots,                   // shared: platform-wide
+            RevocationPolicy        = RevocationPolicy.Skip,
+        },
+        TimeProvider.System,
+        statusSource));
+
+// Per request: identify the application first, verify second.
+if (!verifiers.TryGetValue(clientId, out var verifier))
+{
+    return Unauthorized();
+}
+
+AttestationResult result = await verifier.VerifyAsync(request);
+```
+
+Two things are worth stating plainly about that order.
+
+**Identify the caller before verifying, never from the attestation.** Apple does not expose
+the application identity in the attestation at all — only a hash to compare against. Android
+does expose the package name, but selecting a configuration from it would be circular: the
+device would be choosing the rules it is judged by.
+
+**The client identifier need not be a secret.** If it is taken and replayed by someone else,
+their application is checked against the registered team, bundle and signing digest — and
+refused, because those are what actually authenticate. Getting the identifier wrong fails
+closed.
+
+Trust roots are the exception to per-application configuration: Apple's root is the same for
+every Apple device and Google's for every Android device, so they are shared.
+
 ## Verify an enrollment
 
 ```csharp
